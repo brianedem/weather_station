@@ -11,7 +11,9 @@ unsigned radio_reset;
 unsigned radio_interrupt;
 
 int rssi;
-unsigned frequency = 0xE4C020;
+#define FREQ_915MHZ 0xE4C000
+#define FREQ_1KHZ   0x10
+unsigned frequency = FREQ_915MHZ + 2*FREQ_1KHZ;
 int16_t fei;
 int16_t afc;
 
@@ -45,11 +47,6 @@ struct radioInitValue {
     {0x07, 0xE4},   // change frequency to 915MHz
     {0x08, 0xC0},   // change frequency to 915MHz
     {0x09, 0x20},   // change frequency to 915MHz
-//  {0x07, 0xE5},   // change frequency to 916MHz
-//  {0x08, 0x00},   // change frequency to 916MHz
-//  {0x07, 0xE5},   // change frequency to 916MHz
-//  {0x08, 0x00},   // change frequency to 916MHz
-//  {0x09, 0x00},   // change frequency to 916MHz
 
         // AFC related configuration
 //  {RegAfcCtrl, AfcLowBetaOn},    // for low-beta - shifts LO by 10% of rx bandwidth
@@ -195,68 +192,52 @@ sendFrame(char *buffer, unsigned bufferSize)
     return 0;
 }
 
+static int32_t lock_state = 16;
 uint32_t
 receiveFrame(uint8_t *m_buffer)
 {
+        // buffer for printing debug messages
     char buffer[80];
-    uint32_t count;
-        // check for packet
-    uint32_t start_time = millis();
-    uint8_t low_value;
-    uint8_t high_value;
-        // diagnostics for checking for transmit carrier
-    while (0) {
-        while ((low_value = readRadio(RegRssiValue)) > 100) ;
-        start_time = micros();
-        while ((high_value = readRadio(RegRssiValue)) < 100) ;
-        uint32_t stop_time = micros();
-        uint32_t time_delta = stop_time-start_time;
-        Serial.print(time_delta);
-        Serial.print(" ");
-        Serial.print(low_value);
-        Serial.print(" ");
-        Serial.println(high_value);
-        delay(1000);
-    }
+
     setRadioMode(OpMode_Mode_RX);
-    if (1) {
-        while (1) {
-            if (readRadio(RegIrqFlags1) & IrqFlags1_SyncAddressMatch)
-//          if (readRadio(RegIrqFlags1) & IrqFlags1_RxReady)
-                break;
-        }
-//      writeRadio(RegAfcFei, AfcFei_AfcStart);
-        writeRadio(RegAfcFei, AfcFei_FeiStart);
-//      start_time = micros();
-    }
-    count = 0;
+
+        // wait for packet
+    uint32_t start_time = millis();
     while (1) {
         if (readRadio(RegIrqFlags2) & IrqFlags2_PayloadReady)
             break;
-        if (count++ > (20*100000)) {
-            if (1) {
-                int16_t fei = (readRadio(RegFeiMsb)<<8) | readRadio(RegFeiLsb);
-                int16_t afc = (readRadio(RegAfcMsb)<<8) | readRadio(RegAfcLsb);
-                sprintf(buffer, "D:Fei = %d, Afc = %d, 0x%02x", fei, afc, readRadio(RegAfcFei));
-                Serial.println(buffer);
-//              writeRadio(RegAfcFei(AfcFei_AfcClear | AfcFei_AfcAutoOn );
+        uint32_t time_now = millis();
+        uint32_t wait_time = time_now - start_time;
+        if (lock_state==1) {
+                // check for a 30 second timeout (six lost packets
+            if (wait_time >= 30000) {
+                lock_state = 16;    // ~1kHz
+                Serial.println("D:Signal lost");
             }
-            else
-                Serial.print(".");
-//          writeRadio(RegAfcFei, AfcFei_AfcStart);
-            count = 0;
         }
-//      if (readRadio(RegIrqFlags1) & IrqFlags1_Rssi) {
-//          sprintf(buffer, "D:rssi = %d\n", readRadio(RegRssiValue/2));
-//          Serial.print(buffer);
-//      }
-//      printStatus("No RX");
-//      return;
+        else if (wait_time >= 15000) {
+            start_time = time_now;
+            if (lock_state > 192)   // ~12kHz
+                lock_state = 16;
+            else
+                lock_state += 16;   // ~1kHz
+
+            setRadioMode(OpMode_Mode_STDBY);
+            uint32_t new_frequency = 0xE4C000 + lock_state;
+            sprintf(buffer, "D:Freq was %d, setting to %d", getFrequency(), new_frequency);
+            Serial.println(buffer);
+            setFrequency(new_frequency);  // 915MHz + offset
+            setRadioMode(OpMode_Mode_RX);
+        }
     }
-    uint32_t end_time = micros();
+    if (lock_state!=1) {
+        lock_state = 1;     // indicate that we are again locked
+        Serial.println("D:Signal found");
+    }
+
+    uint32_t count = 0;
 
         // fetch status
-//  printStatus("received message");
     rssi = -(readRadio(RegRssiValue)/2);
     unsigned lna = readRadio(RegLna);
 //  sprintf(buffer, "D:message received - RSII = %d, lna = %02x\n", rssi, lna);
@@ -273,10 +254,6 @@ receiveFrame(uint8_t *m_buffer)
         Serial.println(buffer);
     }
     if (0) {
-        sprintf(buffer, "D:Packet time %dus", end_time-start_time);
-        Serial.println(buffer);
-    }
-    if (1) {
 //      printStatus("switching to FS");
 //      setRadioMode(OpMode_Mode_FS);
         fei = (readRadio(RegFeiMsb)<<8) | readRadio(RegFeiLsb);
