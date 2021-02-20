@@ -12,8 +12,11 @@ unsigned radio_interrupt;
 
 int rssi;
 #define FREQ_915MHZ 0xE4C000
-#define FREQ_1KHZ   0x10
+#define FREQ_1KHZ   0x10    // approximately 61Hz * 16
 unsigned frequency = FREQ_915MHZ + 2*FREQ_1KHZ;
+unsigned frequency_offset = 2*FREQ_1KHZ;
+int32_t rx_trim = 0;
+#define FW_AFC_ONE 1024     // lower bits are fraction, this value is 1.0
 int16_t fei;
 int16_t afc;
 
@@ -39,14 +42,24 @@ struct radioInitValue {
     {0x6F, 0x30},   // Fadin Margin Improvement
 
         // PCB specific configuration changes
-    {0x11, 0x3F},   // Use Pa1 rather than Pa0 for transmitter
+//  {0x11, 0x3F},   // Use Pa1 rather than Pa0 for transmitter
+    {RegPaLevel,
+        PaLevel_Pa1On |
+        PaLevel_OutputPower_Max
+    },
 
 //  {0x37, 0x90},   // variable length packets, enable CRC
-    {0x37, 0xD0},   // variable length packets, enable CRC, whitening
+//  {0x37, 0xD0},   // variable length packets, enable CRC, whitening
+    {RegPacketConfig1,   // variable length packets, enable CRC, whitening
+        PacketConfig1_PacketFormat |    // variable length
+        PacketConfig1_DcFree_Scramble |
+        PacketConfig1_CrcOn |
+        PacketConfig1_AddressFiltering_None
+    },
 
-    {0x07, 0xE4},   // change frequency to 915MHz
-    {0x08, 0xC0},   // change frequency to 915MHz
-    {0x09, 0x20},   // change frequency to 915MHz
+    {RegFrfMsb, frequency>>16},  // change frequency to 915MHz
+    {RegFrfMid, frequency>>8},   // change frequency to 915MHz
+    {RegFrfLsb, frequency},      // change frequency to 915MHz
 
         // AFC related configuration
 //  {RegAfcCtrl, AfcLowBetaOn},    // for low-beta - shifts LO by 10% of rx bandwidth
@@ -54,9 +67,10 @@ struct radioInitValue {
 //  {RegTestAfc, 1},
     {RegPreambleMsb, 0},
     {RegPreambleLsb, 5},    // NXP recommendation when using AFC
-    {0x19, 0x55},   // Channel Filter BW Control 
-    {0x1A, 0x8A},   // Channel Filter BW Control during the AFC routine - double to 100kHz
-    {RegAfcFei, AfcFei_AfcAutoclearOn},
+    {RegRxBw, 0x55},        // Channel Filter BW Control 
+    {RegAfcBw, 0x8A},       // Channel Filter BW Control during the AFC routine - double to 100kHz
+//  {RegAfcFei, AfcFei_AfcAutoclearOn }, //| AfcFei_AfcAutoOn},
+    {RegRssiThreshold, 80*2},
 
         // list end marker
     {0x00, 0x00}
@@ -149,7 +163,10 @@ setFrequency(uint32_t frequency)
     writeRadio(RegFrfMid, frequency >> 8);
     writeRadio(RegFrfLsb, frequency);
 }
-
+int16_t
+getFei() {
+    return (readRadio(RegFeiMsb)<<8) | readRadio(RegFeiLsb);
+}
 
 void
 waitModeReady()
@@ -192,7 +209,8 @@ sendFrame(char *buffer, unsigned bufferSize)
     return 0;
 }
 
-static int32_t lock_state = 16;
+static int32_t lock_state = FREQ_1KHZ;
+static int32_t freq_error = 0;
 uint32_t
 receiveFrame(uint8_t *m_buffer)
 {
@@ -203,7 +221,12 @@ receiveFrame(uint8_t *m_buffer)
 
         // wait for packet
     uint32_t start_time = millis();
+    uint32_t fei_started = 0;
     while (1) {
+        if (!fei_started && readRadio(RegIrqFlags1) & IrqFlags1_RxReady) {
+            writeRadio(RegAfcFei, AfcFei_FeiStart | AfcFei_AfcClear);
+            fei_started = 1;
+        }
         if (readRadio(RegIrqFlags2) & IrqFlags2_PayloadReady)
             break;
         uint32_t time_now = millis();
@@ -211,23 +234,25 @@ receiveFrame(uint8_t *m_buffer)
         if (lock_state==1) {
                 // check for a 30 second timeout (six lost packets
             if (wait_time >= 30000) {
-                lock_state = 16;    // ~1kHz
+                lock_state = FREQ_1KHZ;
                 Serial.println("D:Signal lost");
             }
         }
         else if (wait_time >= 15000) {
             start_time = time_now;
             if (lock_state > 192)   // ~12kHz
-                lock_state = 16;
+                lock_state = FREQ_1KHZ;
             else
-                lock_state += 16;   // ~1kHz
+                lock_state += FREQ_1KHZ;
 
             setRadioMode(OpMode_Mode_STDBY);
-            uint32_t new_frequency = 0xE4C000 + lock_state;
-            sprintf(buffer, "D:Freq was %d, setting to %d", getFrequency(), new_frequency);
+            frequency = FREQ_915MHZ + lock_state;
+            sprintf(buffer, "D:Freq was %x, setting to %x", getFrequency(), frequency);
             Serial.println(buffer);
-            setFrequency(new_frequency);  // 915MHz + offset
+            setFrequency(frequency);  // 915MHz + offset
+            rx_trim = 0;
             setRadioMode(OpMode_Mode_RX);
+            fei_started = 0;
         }
     }
     if (lock_state!=1) {
@@ -239,35 +264,46 @@ receiveFrame(uint8_t *m_buffer)
 
         // fetch status
     rssi = -(readRadio(RegRssiValue)/2);
-    unsigned lna = readRadio(RegLna);
-//  sprintf(buffer, "D:message received - RSII = %d, lna = %02x\n", rssi, lna);
-//  Serial.print(buffer);
+    if (0) {
+        int16_t fei = (readRadio(RegFeiMsb)<<8) | readRadio(RegFeiLsb);
+        int16_t afc = (readRadio(RegAfcMsb)<<8) | readRadio(RegAfcLsb);
+        sprintf(buffer, "D:Fei = %d, Afc = %d, RegAfcFei = 0x%02x", fei, afc, readRadio(RegAfcFei));
+        Serial.println(buffer);
+        //sprintf(buffer, "D:Frequency now %x", getFrequency());
+        //Serial.println(buffer);
+        unsigned lna = readRadio(RegLna);
+        sprintf(buffer, "D:message received - RSII = %d, lna = %02x\n", rssi, lna);
+        Serial.print(buffer);
+    }
+
     count = 0;
     while (readRadio(RegIrqFlags2) & IrqFlags2_FifoNotEmpty) {
         *m_buffer++ = readRadio(RegFifo);
         count++;
     }
-    if (0) {
-        int16_t fei = (readRadio(RegFeiMsb)<<8) | readRadio(RegFeiLsb);
-        int16_t afc = (readRadio(RegAfcMsb)<<8) | readRadio(RegAfcLsb);
-        sprintf(buffer, "D:Fei = %d, Afc = %d, 0x%02x", fei, afc, readRadio(RegAfcFei));
-        Serial.println(buffer);
-    }
-    if (0) {
-//      printStatus("switching to FS");
-//      setRadioMode(OpMode_Mode_FS);
-        fei = (readRadio(RegFeiMsb)<<8) | readRadio(RegFeiLsb);
-        afc = (readRadio(RegAfcMsb)<<8) | readRadio(RegAfcLsb);
-        if (1) { //(fei > 20 || fei < -20) {
-//          Serial.println("Updating frequency ");
-//          frequency = getFrequency();
-            frequency += (afc+fei)/8;
-            setFrequency(frequency);
-//          Serial.println(frequency, HEX);
+        // firmware based AFC
+    if (1) {
+        fei = getFei();
+        rx_trim += fei;
+        sprintf(buffer, "D:fei = %d, rx_trim = %d, frequency = %x", fei, rx_trim, frequency);
+        // Serial.println(buffer);
+        int frequency_adjust = 0;
+        if (rx_trim > FW_AFC_ONE) {
+            rx_trim -= FW_AFC_ONE;
+            frequency++;
+            frequency_adjust = 1;
         }
-        
-//      printStatus("switching to RX");
-//      setRadioMode(OpMode_Mode_RX);
+        else if (rx_trim < -FW_AFC_ONE) {
+            rx_trim += FW_AFC_ONE;
+            frequency--;
+            frequency_adjust = 1;
+        }
+        if (frequency_adjust) {
+            setFrequency(frequency);
+            sprintf(buffer, "D:new frequency = %x", frequency);
+            Serial.println(buffer);
+        }
+        afc = rx_trim;
     }
     setRadioMode(OpMode_Mode_STDBY);
 

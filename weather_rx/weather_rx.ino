@@ -5,25 +5,46 @@
 #define ELEVATION_CORRECTION 910    // in pascals
 
 // Feather M0 IO Ports
-#define RED_LED 13
+#define RED_LED LED_BUILTIN // 13
 
-#define RADIO_CS 8
-#define RADIO_INT 3
-#define RADIO_RESET 4
+#ifdef _VARIANT_FEATHER52832_
+#define     RADIO_CS    11
+#define     RADIO_RESET 7
+#define     DIO0        2
+#define     DIO1        3
+#define     DIO2        4
+#define     DIO3        5
+#define     DIO4        28
+#define     DIO5        29
+
+#else
+#define     RADIO_CS    8
+#define     RADIO_RESET 4
+#define     DIO0        3
+#endif
+
+#define     RADIO_INT   DIO0
 
 unsigned led_state = HIGH;
 
 // the setup function runs once when you press reset or power the board
 void setup() {
+
+    char buffer[100];
+    int count=0;
+
+#ifdef _VARIANT_FEATHER52832_
+    Serial.begin(115200);
+#else
     // The USB serial interface takes several seconds to open if the board
     // is connected to the system and if the board was loaded/reset via
     // the Arduino tool
-    int count=0;
     while (count<1000 && !Serial) { // only wait 10 seconds in case board is running standalone
         count++;
         delay(1);
     }
-    char buffer[100];
+#endif
+
     sprintf(buffer, "I:Startup %d\n", count);
     Serial.print(buffer);
     
