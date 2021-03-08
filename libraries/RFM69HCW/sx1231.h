@@ -18,13 +18,15 @@
 #define RegAfcCtrl          0x0B
 #define    AfcLowBetaOn                 1<<5
 #define RegPaLevel          0x11
-#define    PaLevel_Pa0On                1<<7
-#define    PaLevel_Pa1On                1<<6
-#define    PaLevel_Pa2On                1<<5
-#define    PaLevel_OutputPower_Max      0x1F<<0
+#define     PaLevel_Pa0On               1<<7
+#define     PaLevel_Pa1On               1<<6
+#define     PaLevel_Pa2On               1<<5
+#define     PaLevel_OutputPower_Max     0x1F
 #define RegLna              0x18
 #define     Lna_LnaZin_50               0<<7
 #define     Lna_LnaZin_200              1<<7
+#define     Lna_LnaCurrentGain_shift    3
+#define     Lna_LnaCurrentGain_mask    (7<<Lna_LnaCurrentGain_shift)
 #define     Lna_LnaGainSelect_AGC       0<<0
 #define RegRxBw             0x19
 #define RegAfcBw            0x1A
@@ -97,10 +99,9 @@
 #define RegPreambleLsb      0x2D
 #define RegPacketConfig1    0x37
 #define    PacketConfig1_PacketFormat   1<<7    // default 0 - fixed length
-#define    PacketConfig1_DcFree_None        0<<5    // default 0 - none, 01-manch, 10-random
-#define    PacketConfig1_DcFree_Manchester  1<<5
-#define    PacketConfig1_DcFree_Scramble    2<<5
-#define    PacketConfig1_DcFree_Mask        3<<5    // default 0 - none, 01-manch, 10-random
+#define    PacketConfig1_DcFree_Mask    3<<5    // default 0 - none, 01-manch, 10-random
+#define    PacketConfig1_DcFree_Manchester 1<<5
+#define    PacketConfig1_DcFree_Scramble   2<<5
 #define    PacketConfig1_CrcOn          1<<4    // default 1
 #define    PacketConfig1_CrcAutoClearOff 1<<3   // default 0
 #define    PacketConfig1_AddressFiltering_None              0<<1  // default 00 - none
@@ -109,14 +110,27 @@
 #define    PacketConfig1_AddressFiltering_Mask              3<<1
 #define RegFifoThresh       0x3C
 #define    FifoThresh_TxStartCondition  1<<7
+#define RegPacketConfig2    0x3D
+#define    PacketConfig2_InterPacketRxDelay(delay) (delay<<4)
+#define    PacketConfig2_RestartRx      1<<2
+#define    PacketConfig2_AutoRestartOn  1<<1
+#define    PacketConfig2_AesOn          1<<0
 #define RegTestDagc         0x6F
 #define RegTestAfc          0x71
 
-void        writeRadio(byte reg_addr, byte value);
-unsigned    readRadio(byte reg_addr);
-void        radioInit(unsigned pin_chip_select, unsigned pin_reset, unsigned pin_interrupt);
-void        setRadioMode(unsigned mode);
-unsigned    sendFrame(char *buffer, unsigned bufferSize);
-uint32_t    receiveFrame(uint8_t *);
-void        waitModeReady();
 #endif
+
+void        radioInit();
+void        writeRadio(byte reg_addr, byte value);
+uint32_t    readRadio(byte reg_addr);
+uint32_t    sendFrame(char *buffer, unsigned bufferSize);
+uint32_t    receiveFrame(uint8_t *m_buffer);
+
+#define SPI_WRITE   0x80
+#define SPI_READ    0x00
+
+    // routines defined in main code branch
+void writeRadio(byte reg_addr, byte value);
+uint32_t readRadio(byte reg_addr);
+uint32_t radioSpi(uint32_t operation, uint32_t reg_addr, uint32_t writeValue, uint32_t bytes);
+uint32_t readRadioIntr();

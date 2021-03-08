@@ -1,5 +1,6 @@
 #include <Streaming.h>
 #include <stdint.h>
+#include <SPI.h>
 #include "i2c.h"
 #include "sx1231.h"
 #include "bme280_user.h"
@@ -9,19 +10,52 @@
 #define MPL3115_ADDRESS 0x60
 
 // Feather M0 IO Ports
-#define RED_LED 13
-#define BLUE_LED 10
-#define GREEN_LED 6
+#define RED_LED     13
+#define BLUE_LED    10
+#define GREEN_LED   6
 
-#define RADIO_CS 8
-#define RADIO_INT 3
+#define RADIO_CS    8
 #define RADIO_RESET 4
+#define DIO0        3
+
+#define RADIO_INT   DIO0
 
     // Analog ports
 #define BATTERY 7
 
     // samples collected per transmission
 #define TX_SAMPLES 1
+
+void
+writeRadio(byte reg_addr, byte value)
+{
+    digitalWrite(RADIO_CS, LOW);
+    SPI.transfer(reg_addr | 0x80);
+    SPI.transfer(value);
+    digitalWrite(RADIO_CS, HIGH);
+}
+
+uint32_t
+readRadio(byte reg_addr)
+{
+    digitalWrite(RADIO_CS, LOW);
+    SPI.transfer(reg_addr | 0x00);
+    byte result = SPI.transfer(0x00);
+    digitalWrite(RADIO_CS, HIGH);
+    return result;
+}
+
+uint32_t
+radioSpi(uint32_t operation, uint32_t reg_addr, uint32_t writeValue, uint32_t bytes)
+{
+    uint32_t result = 0;
+    digitalWrite(RADIO_CS, LOW);
+    SPI.transfer(reg_addr | operation);
+    while (bytes--)
+         result = result<<8 | SPI.transfer(writeValue>>(bytes*8));
+    digitalWrite(RADIO_CS, HIGH);
+    return result;
+}
 
 unsigned MPL3115_temperature;   // Celceus
 unsigned MPL3115_pressure;      // Pascals
@@ -55,7 +89,7 @@ weather_pack(uint32_t value, char *array, uint32_t length)
 void setup() {
     // The USB serial interface takes several seconds to open if the board is connected to the system and if the
     // board was loaded/reset via the Arduino tool
-    int count=0;
+    uint32_t count=0;
     while (count<1000 && !Serial) { // only wait 10 seconds in case board is running standalone
         count++;
         delay(1);
@@ -68,14 +102,12 @@ void setup() {
     pinMode(RED_LED, OUTPUT);
     pinMode(BLUE_LED, OUTPUT);
     pinMode(GREEN_LED, OUTPUT);
-    pinMode(ARDENT_RAIN, INPUT_PULLUP);
-    pinMode(ARDENT_SPEED, INPUT_PULLUP);
 
     // initialize the I2C interface
     i2c_init();
 
     // initialize the MPL3115A2 pressure/temperature sensor
-    unsigned i;
+    uint32_t i;
     uint8_t message[] = {
         0x26,0x38,  // pressure, 128x oversample
         0x27,0x02, // 4 second interval
@@ -91,9 +123,26 @@ void setup() {
     bme280_setup();
 
     // initialize the radio
-    radioInit(RADIO_CS, RADIO_RESET, RADIO_INT);
+    pinMode(RADIO_INT, INPUT);
+    pinMode(RADIO_CS, OUTPUT);
+    pinMode(RADIO_RESET, OUTPUT);
+    digitalWrite(RADIO_CS, HIGH);
+
+        // initialize the SPI interface to the radio
+    SPI.begin();
+
+        // reset the radio
+    digitalWrite(RADIO_RESET, HIGH);
+    delay(10);      // assert for a minimum of 100us
+    digitalWrite(RADIO_RESET, LOW);
+    delay(10);      // wait at least 5ms; but 10ms after POR
+
+        // set up the radio
+    radioInit();
 
     // initialize the wind and rain subsystem
+    pinMode(ARDENT_RAIN, INPUT_PULLUP);
+    pinMode(ARDENT_SPEED, INPUT_PULLUP);
     ardentInit();
 
     // turn off the red LED

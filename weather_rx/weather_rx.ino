@@ -1,6 +1,7 @@
 #include <Streaming.h>
 #include <stdint.h>
 #include "sx1231.h"
+#include <SPI.h>
 
 #define ELEVATION_CORRECTION 910    // in pascals
 
@@ -8,30 +9,66 @@
 #define RED_LED LED_BUILTIN // 13
 
 #ifdef _VARIANT_FEATHER52832_
-#define     RADIO_CS    11
-#define     RADIO_RESET 7
-#define     DIO0        2
-#define     DIO1        3
-#define     DIO2        4
-#define     DIO3        5
-#define     DIO4        28
-#define     DIO5        29
+#define RADIO_CS    11
+#define RADIO_RESET 7
+#define DIO0        2
+#define DIO1        3
+#define DIO2        4
+#define DIO3        5
+#define DIO4        28
+#define DIO5        29
 
 #else
-#define     RADIO_CS    8
-#define     RADIO_RESET 4
-#define     DIO0        3
+#define RADIO_CS    8
+#define RADIO_RESET 4
+#define DIO0        3
 #endif
 
 #define     RADIO_INT   DIO0
 
-unsigned led_state = HIGH;
+void
+writeRadio(byte reg_addr, byte value)
+{
+    digitalWrite(RADIO_CS, LOW);
+    SPI.transfer(reg_addr | 0x80);
+    SPI.transfer(value);
+    digitalWrite(RADIO_CS, HIGH);
+}
+
+uint32_t
+readRadio(byte reg_addr)
+{
+    digitalWrite(RADIO_CS, LOW);
+    SPI.transfer(reg_addr | 0x00);
+    byte result = SPI.transfer(0x00);
+    digitalWrite(RADIO_CS, HIGH);
+    return result;
+}
+
+uint32_t
+radioSpi(uint32_t operation, uint32_t reg_addr, uint32_t writeValue, uint32_t bytes)
+{
+    uint32_t result = 0;
+    digitalWrite(RADIO_CS, LOW);
+    SPI.transfer(reg_addr | operation);
+    while (bytes--)
+         result = result<<8 | SPI.transfer(writeValue>>(bytes*8));
+    digitalWrite(RADIO_CS, HIGH);
+    return result;
+}
+
+uint32_t
+readRadioIntr() {
+    return digitalRead(RADIO_INT);
+}
+
+uint32_t led_state = HIGH;
 
 // the setup function runs once when you press reset or power the board
 void setup() {
 
     char buffer[100];
-    int count=0;
+    uint32_t count=0;
 
 #ifdef _VARIANT_FEATHER52832_
     Serial.begin(115200);
@@ -51,9 +88,23 @@ void setup() {
     // initialize digital pins
     pinMode(RED_LED, OUTPUT);
 
-    // initialize the radio
-    radioInit(RADIO_CS, RADIO_RESET, RADIO_INT);
-    setRadioMode(OpMode_Mode_RX);
+        // set up the radio
+    pinMode(RADIO_INT, INPUT);
+    pinMode(RADIO_CS, OUTPUT);
+    pinMode(RADIO_RESET, OUTPUT);
+    digitalWrite(RADIO_CS, HIGH);
+
+        // initialize the SPI interface to the radio
+    SPI.begin();
+
+        // reset the radio
+    digitalWrite(RADIO_RESET, HIGH);
+    delay(10);      // assert for a minimum of 100us
+    digitalWrite(RADIO_RESET, LOW);
+    delay(10);      // wait at least 5ms; but 10ms after POR
+
+        // initialize the radio
+    radioInit();
 }
 
 // routine to extract weather packet elements
@@ -67,12 +118,12 @@ weather_unpack(uint8_t *m, uint32_t size)
     return value;
 }
 
-unsigned previous_uptime = 0;
-unsigned packet_count = 1;
-unsigned packet_loss = 0;
+uint32_t previous_uptime = 0;
+uint32_t packet_count = 1;
+uint32_t packet_loss = 0;
 
-extern int rssi;
-extern unsigned frequency;
+extern uint32_t rssi;
+extern uint32_t rxFrequency;
 extern int16_t fei;
 extern int16_t afc;
 
@@ -108,7 +159,7 @@ void loop() {
         uint32_t ardent_rainfall        = weather_unpack(m+34, 4);
         uint8_t windspeed[12];
 
-        int i;
+        uint32_t i;
         uint32_t wind_count;
         for (i=38,wind_count=0; i<length; i++,wind_count++) {
             windspeed[wind_count] = m[i];
@@ -116,7 +167,7 @@ void loop() {
         if (1) {
             sprintf(buffer, "M:%d %d %d %d %d %d %d %d %d %d %d %d %d %d",
                 rssi,
-                frequency,
+                rxFrequency,
                 fei,
                 afc,
                 battery_voltage,
@@ -181,9 +232,8 @@ void loop() {
         Serial.print(buffer);
     }
 
+        // update the LED to show progress
     led_state = !led_state;
     digitalWrite(RED_LED, led_state);   // turn the LED on (HIGH is the voltage level)
-
-    delay(3000);    // packet arrives every 5 seconds
 
 }
