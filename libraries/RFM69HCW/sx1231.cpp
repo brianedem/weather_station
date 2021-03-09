@@ -247,19 +247,19 @@ receiveListen(uint8_t *m_buffer, uint32_t rx_freq, uint32_t listenTimeMs)
                 lastPacketReceptionMs = rssiMs;
 
                     // Print out diagnostic info
-                sprintf(buffer, "I:reception complete after %dms", (micros()-listenStartTime)/1000);
-                Serial.println(buffer);
                 if (0) {
+                    sprintf(buffer, "I:reception complete after %dms", (micros()-listenStartTime)/1000);
+                    Serial.println(buffer);
                     sprintf(buffer, "I:%dms: RSSI", rssiMs-lastPacketReceptionMs);
                     Serial.println(buffer);
                     sprintf(buffer, "I:%dus: SyncAddress", syncAddressUs-rssiUs);
                     Serial.println(buffer);
                     sprintf(buffer, "I:%dus: PayloadReady", payloadReadyUs-syncAddressUs);
                     Serial.println(buffer);
+                    sprintf(buffer, "I:frequency = %x, FEI=%d, RSSI=%d, syncTimeouts=%d",
+                            getFrequency(), fei, rssi, syncTimeout);
+                    Serial.println(buffer);
                 }
-                sprintf(buffer, "I:frequency = %x, FEI=%d, RSSI=%d, syncTimeouts=%d",
-                        getFrequency(), fei, rssi, syncTimeout);
-                Serial.println(buffer);
 
                 return 0;
             }
@@ -339,20 +339,20 @@ receiveFrame(uint8_t *m_buffer)
             int32_t delayInterval = nextPacketStart - currentTimeMs - PACKET_START_OFFSET;
             if (delayInterval < 0)
                 delayInterval += PACKET_INTERVAL;
-            sprintf(buffer, "I:delay %d", delayInterval);
-            Serial.println(buffer);
+//          sprintf(buffer, "I:delay %d", delayInterval);
+//          Serial.println(buffer);
             delay(delayInterval);
         }
             // attempt to receive a packet
-        sprintf(buffer, "I:receiving at %x with timeout of %d", rxFrequency, rxTimeout);
-        Serial.println(buffer);
+//      sprintf(buffer, "I:receiving at %x with timeout of %d", rxFrequency, rxTimeout);
+//      Serial.println(buffer);
         uint32_t rxError = receiveListen(m_buffer, rxFrequency, rxTimeout);
 
             // if a packet was received record the time to establish the interval
 
         if (rxError) {
-            sprintf(buffer, "I:packet RX timeout %d", rxError);
-            Serial.println(buffer);
+//          sprintf(buffer, "I:packet RX timeout %d", rxError);
+//          Serial.println(buffer);
             consectivePacketLossCount++;
             if (consectivePacketLossCount>=CONNECTION_LOST_THRESHOLD) {
                 rxConnectedState = 0;
@@ -380,8 +380,8 @@ receiveFrame(uint8_t *m_buffer)
         }
     }
         // frequency tracking diagnostic info
-    sprintf(buffer, "I:rxFrequencyTrim = %d, rxFrequency = %x", rxFrequencyTrim, rxFrequency);
-    Serial.println(buffer);
+//  sprintf(buffer, "I:rxFrequencyTrim = %d, rxFrequency = %x", rxFrequencyTrim, rxFrequency);
+//  Serial.println(buffer);
 
     return 0;
 }

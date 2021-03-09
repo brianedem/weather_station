@@ -82,7 +82,7 @@ void setup() {
     }
 #endif
 
-    sprintf(buffer, "I:Startup %d\n", count);
+    sprintf(buffer, "I:Startup %d - %s\n", count, __DATE__);
     Serial.print(buffer);
     
     // initialize digital pins
@@ -126,6 +126,7 @@ extern uint32_t rssi;
 extern uint32_t rxFrequency;
 extern int16_t fei;
 extern int16_t afc;
+extern int32_t rxFrequencyTrim;
 
 
 // the loop function runs over and over again forever
@@ -169,7 +170,7 @@ void loop() {
                 rssi,
                 rxFrequency,
                 fei,
-                afc,
+                rxFrequencyTrim,
                 battery_voltage,
                 MPL3115_temperature,
                 MPL3115_pressure,
