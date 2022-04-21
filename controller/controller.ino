@@ -5,12 +5,17 @@ const int BUFFER_SIZE = 100;
 char buf[BUFFER_SIZE];
 int buf_index = 0;
 
-#define MAX_PARAMS 100
+#define MAX_PARAMS 25
 unsigned values[MAX_PARAMS];
+
+unsigned frequency = 100;           // default to 100 kHz
+unsigned timeout = 100;     // default to 100 ms
 
 void setup() {
   Wire.begin();
+  Wire.setWireTimeout(timeout*1000L, true);
   Serial.begin(9600);
+  Serial.print("Controller >");
 }
 // command format:
 //   i2c_cmd [; i2c_cmd]
@@ -20,6 +25,10 @@ void setup() {
 //   r <address> <length>
 // i2c_write:
 //   w <address> <data> [<data>]*
+// bus timeout:
+//   t <value_in_ms>
+// frequency:
+//   f <value_in_kHz>
 int get_params(char *params) {
     
     int i = 0;
@@ -40,6 +49,15 @@ int get_params(char *params) {
     }
     return i;
 }
+const char *help_message = 
+    "commands:\r\n"
+    "  r address [length] // reads length bytes from device at address\r\n"
+    "  w address data*  // writes to device at address one or more bytes\r\n"
+    "  t value          // enable bus timeout reset, value in ms (zero disables)\r\n"
+    "  f value          // set I2C bus clock frequency in kHz\r\n"
+    "Addresses are 7-bit\r\n"
+    "To specify a sequence of commands separated with RESTART enter the\r\n"
+    "commands on a single line separated with \";\"\r\n";
 
 void loop() {
   if (Serial.available() > 0) {
@@ -79,15 +97,22 @@ void loop() {
             // read command processing
           if (tolower(*cmd)=='r') {
             int pcnt = get_params(cmd+1);
-            if (pcnt!=1) {
-                Serial.print("read command only supports one parameter - address\n");
+            int length;
+            if (pcnt==1)
+                length = 4;
+            else if (pcnt==2)
+                length = values[1];
+            else {
+                Serial.println("read command one or two parameters - address [length]");
                 break;
             }
-            Serial.print("read ");
+            Serial.print("reading ");
+            Serial.print(length);
+            Serial.print(" bytes from ");
             Serial.println(values[0]);
 
                 // perform I2C read
-            int count = Wire.requestFrom(8, 4);
+            int count = Wire.requestFrom(values[0], length);
             Serial.print(count);
             Serial.print(" bytes were returned:");
             while (count--) {
@@ -102,7 +127,7 @@ void loop() {
           else if(tolower(*cmd)=='w') {
             int pcnt = get_params(cmd+1);
             if (pcnt<2) {
-                Serial.print("write command requires more than one parameter\n");
+                Serial.println("write command requires more than one parameter");
                 break;
             }
             Serial.print("write");
@@ -135,13 +160,61 @@ void loop() {
                 break;
             }
           }
+
+            // bus timeout control
+          else if (tolower(*cmd)=='t') {
+            int pcnt = get_params(cmd+1);
+            if (pcnt!=1) {
+                Serial.println("timeout command requires a single parameter");
+                break;
+            }
+            timeout = values[0];
+            Wire.setWireTimeout(timeout*1000L, true);
+            if (values[0]==0)
+                Serial.println("timeout disabled");
+            else {
+                Serial.print("timeout set to ");
+                Serial.print(timeout);
+                Serial.println(" milliseconds");
+            }
+          }
+
+            // bus frequency
+          else if (tolower(*cmd)=='f') {
+            int pcnt = get_params(cmd+1);
+            if (pcnt!=1) {
+                Serial.println("speed command requires a single parameter");
+                break;
+            }
+            if (values[0] < 10 || values[0]> 1000) {
+                Serial.println("frequency value out of range");
+            }
+            else {
+                frequency = values[0];
+                Wire.setClock(frequency*1000L);
+                Serial.print("frequency set to ");
+                Serial.print(frequency);
+                Serial.println(" kHz");
+            }
+          }
+
           else {
-            Serial.print("Unknown command ");
-            Serial.println(cmd);
+            if (*cmd) {
+                Serial.print("Unknown command ");
+                Serial.println(cmd);
+                Serial.print(help_message);
+                Serial.print(" Frequency set to ");
+                Serial.print(frequency);
+                Serial.println(" kHz");
+                Serial.print(" Timeout is ");
+                Serial.print(timeout);
+                Serial.println(" ms");
+            }
             break;
           }
           cmd = next_cmd;
         } while (cmd!=NULL);
+        Serial.print("Controller >");
       }
   }
 }
